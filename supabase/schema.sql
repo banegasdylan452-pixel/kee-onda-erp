@@ -141,3 +141,4 @@ CREATE POLICY "Permitir todo en cash_shifts" ON cash_shifts FOR ALL USING (true)
 
 -- 12. HABILITAR TIEMPO REAL (REALTIME)
 ALTER PUBLICATION supabase_realtime ADD TABLE categories, suppliers, products, customers, sales, sale_items, finances, cash_shifts;
+
