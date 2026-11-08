@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import 'chart.js/auto';
 import '../../utils/chartSetup';
 import { Chart } from 'react-chartjs-2';
 import { BarChart3, PieChart, LineChart, Percent, DollarSign, HelpCircle } from 'lucide-react';

@@ -1,31 +1,8 @@
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  PointElement,
-  LineElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-  RadialLinearScale,
-} from 'chart.js';
+import { Chart as ChartJS, registerables } from 'chart.js';
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  PointElement,
-  LineElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-  RadialLinearScale
-);
+// Register all Chart.js controllers (line, bar, doughnut, pie, etc.), scales, elements and plugins
+ChartJS.register(...registerables);
 
 export default ChartJS;
+
 
