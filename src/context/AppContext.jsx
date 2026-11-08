@@ -89,7 +89,7 @@ export function AppProvider({ children }) {
   // Auth state
   const [user, setUser] = useState(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_USER`);
-    return saved ? JSON.parse(saved) : { id: 'u-1', username: 'admin', name: 'Dueño (Admin)', role: 'admin' };
+    return saved ? JSON.parse(saved) : { id: 'u-1', username: 'Kioscokeonda', name: 'Dueño KEE ONDA', role: 'admin' };
   });
 
   // Dark Mode state
@@ -257,19 +257,33 @@ export function AppProvider({ children }) {
 
   // Auth
   const login = (username, password) => {
-    if ((username === 'admin' && password === '1234') || username === 'admin') {
-      const u = { id: 'u-1', username: 'admin', name: 'Dueño KEE ONDA (Admin)', role: 'admin' };
+    const cleanUser = (username || '').trim().toLowerCase();
+    const cleanPass = (password || '').trim();
+
+    if (cleanUser === 'kioscokeonda' && cleanPass === '1656') {
+      const u = { id: 'u-1', username: 'Kioscokeonda', name: 'Dueño KEE ONDA (Admin)', role: 'admin' };
       setUser(u);
       localStorage.setItem(`${STORAGE_KEY}_USER`, JSON.stringify(u));
       return { success: true };
     }
-    if ((username === 'cajero' && password === '1234') || username === 'cajero') {
-      const u = { id: 'u-2', username: 'cajero', name: 'Cajero Turno Noche', role: 'cajero' };
+    if (cleanUser === 'cajero' && (cleanPass === '1656' || cleanPass === '1234')) {
+      const u = { id: 'u-2', username: 'cajero', name: 'Cajero KEE ONDA', role: 'cajero' };
       setUser(u);
       localStorage.setItem(`${STORAGE_KEY}_USER`, JSON.stringify(u));
       return { success: true };
     }
-    return { success: false, message: 'Usuario o contraseña incorrecta. (Prueba: admin / 1234 o cajero / 1234)' };
+    // Also allow admin as fallback
+    if (cleanUser === 'admin' && (cleanPass === '1656' || cleanPass === '1234')) {
+      const u = { id: 'u-1', username: 'Kioscokeonda', name: 'Dueño KEE ONDA (Admin)', role: 'admin' };
+      setUser(u);
+      localStorage.setItem(`${STORAGE_KEY}_USER`, JSON.stringify(u));
+      return { success: true };
+    }
+
+    return {
+      success: false,
+      message: 'Usuario o contraseña incorrectos. Usuario: Kioscokeonda | Clave: 1656',
+    };
   };
 
   const logout = () => {

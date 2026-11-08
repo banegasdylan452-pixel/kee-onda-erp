@@ -15,8 +15,8 @@ import {
 export default function Login() {
   const { login, darkMode, toggleDarkMode } = useApp();
 
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('1234');
+  const [username, setUsername] = useState('Kioscokeonda');
+  const [password, setPassword] = useState('1656');
   const [error, setError] = useState('');
 
   const handleSubmit = (e) => {
@@ -31,13 +31,13 @@ export default function Login() {
 
   const handleQuickLogin = (role) => {
     if (role === 'admin') {
-      setUsername('admin');
-      setPassword('1234');
-      login('admin', '1234');
+      setUsername('Kioscokeonda');
+      setPassword('1656');
+      login('Kioscokeonda', '1656');
     } else {
       setUsername('cajero');
-      setPassword('1234');
-      login('cajero', '1234');
+      setPassword('1656');
+      login('cajero', '1656');
     }
   };
 
@@ -102,7 +102,7 @@ export default function Login() {
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="admin o cajero"
+                placeholder="Kioscokeonda"
                 className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-red-500"
               />
             </div>
@@ -119,7 +119,7 @@ export default function Login() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="1234"
+                placeholder="1656"
                 className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-red-500"
               />
             </div>
@@ -137,7 +137,7 @@ export default function Login() {
         {/* Quick Demo Accounts Buttons */}
         <div className="mt-6 pt-5 border-t border-slate-200 dark:border-slate-800">
           <div className="text-center text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2.5">
-            Acceso Rápido de Prueba (1-Click)
+            Acceso Rápido (1-Click)
           </div>
 
           <div className="grid grid-cols-2 gap-2">
@@ -147,9 +147,9 @@ export default function Login() {
             >
               <div className="text-xs font-bold text-slate-800 dark:text-white flex items-center gap-1">
                 <ShieldCheck className="w-3.5 h-3.5 text-red-600" />
-                <span>Dueño (Admin)</span>
+                <span>Kioscokeonda</span>
               </div>
-              <div className="text-[10px] text-slate-400">admin / 1234</div>
+              <div className="text-[10px] text-slate-400 font-mono">Clave: 1656</div>
             </button>
 
             <button
@@ -158,9 +158,9 @@ export default function Login() {
             >
               <div className="text-xs font-bold text-slate-800 dark:text-white flex items-center gap-1">
                 <Store className="w-3.5 h-3.5 text-blue-600" />
-                <span>Cajero Noche</span>
+                <span>Cajero</span>
               </div>
-              <div className="text-[10px] text-slate-400">cajero / 1234</div>
+              <div className="text-[10px] text-slate-400 font-mono">Clave: 1656</div>
             </button>
           </div>
         </div>
