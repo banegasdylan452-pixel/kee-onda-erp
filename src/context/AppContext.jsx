@@ -5,6 +5,11 @@ const AppContext = createContext();
 
 const STORAGE_KEY = 'KEE_ONDA_ERP_EMPTY_V2';
 
+// UUID validation helper for Postgres UUID columns
+const isValidUuid = (val) =>
+  typeof val === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(val);
+
 // -------------------------------------------------------------
 // Helper Mappers between CamelCase (React) and SnakeCase (SQL)
 // -------------------------------------------------------------
@@ -577,7 +582,7 @@ export function AppProvider({ children }) {
 
         const dbItems = saleItems.map((item) => ({
           sale_id: newSale.id,
-          product_id: item.productId.startsWith('prod-') ? null : item.productId,
+          product_id: isValidUuid(item.productId) ? item.productId : null,
           name: item.name,
           category: item.category,
           price: item.price,
@@ -593,14 +598,14 @@ export function AppProvider({ children }) {
         // Update product stocks in Supabase
         for (const item of saleItems) {
           const p = updatedProducts.find((pr) => pr.id === item.productId);
-          if (p && !p.id.startsWith('prod-')) {
+          if (p && isValidUuid(p.id)) {
             await supabase.from('products').update({ stock: p.stock }).eq('id', p.id);
           }
         }
 
         if (paymentMethod === 'Cuenta Corriente' && customerName) {
           const cust = customers.find((c) => c.name === customerName);
-          if (cust && !cust.id.startsWith('cust-')) {
+          if (cust && isValidUuid(cust.id)) {
             await supabase.from('customers').update({ debt: (cust.debt || 0) + totalAmount }).eq('id', cust.id);
           }
         }

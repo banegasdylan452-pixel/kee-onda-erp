@@ -250,7 +250,7 @@ export default function PosView({ onNavigateToCreateProduct }) {
   }, [cashReceived, cartTotal, paymentMethod]);
 
   // Handle Checkout
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     if (cart.length === 0) return;
 
     if (paymentMethod === 'Cuenta Corriente' && !selectedCustomer) {
@@ -266,29 +266,34 @@ export default function PosView({ onNavigateToCreateProduct }) {
     const receivedNum = paymentMethod === 'Efectivo' ? Number(cashReceived) || cartTotal : cartTotal;
     const changeNum = paymentMethod === 'Efectivo' ? cashChange : 0;
 
-    const completedSale = addSale({
-      items: cart,
-      paymentMethod,
-      customerName: selectedCustomer || 'Consumidor Final',
-      receivedCash: receivedNum,
-      changeCash: changeNum,
-    });
-
-    // Confetti effect
     try {
-      confetti({
-        particleCount: 75,
-        spread: 60,
-        origin: { y: 0.65 },
-        colors: ['#ef4444', '#f59e0b', '#10b981', '#3b82f6'],
+      const completedSale = await addSale({
+        items: cart,
+        paymentMethod,
+        customerName: selectedCustomer || 'Consumidor Final',
+        receivedCash: receivedNum,
+        changeCash: changeNum,
       });
-    } catch {
-      // safe fallback
-    }
 
-    setLastCompletedSale(completedSale);
-    setShowReceiptModal(true);
-    clearCart();
+      // Confetti effect
+      try {
+        confetti({
+          particleCount: 75,
+          spread: 60,
+          origin: { y: 0.65 },
+          colors: ['#ef4444', '#f59e0b', '#10b981', '#3b82f6'],
+        });
+      } catch {
+        // safe fallback
+      }
+
+      setLastCompletedSale(completedSale);
+      setShowReceiptModal(true);
+      clearCart();
+    } catch (err) {
+      console.error('Error al confirmar venta:', err);
+      alert('Ocurrió un error al registrar la venta. Inténtalo nuevamente.');
+    }
   };
 
   const printReceipt = () => {
@@ -813,7 +818,7 @@ export default function PosView({ onNavigateToCreateProduct }) {
       )}
 
       {/* THERMAL RECEIPT MODAL (TICKET KEE ONDA) */}
-      {showReceiptModal && lastCompletedSale && (
+      {showReceiptModal && lastCompletedSale && typeof lastCompletedSale === 'object' && !lastCompletedSale.then && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
             {/* Header */}
@@ -824,7 +829,7 @@ export default function PosView({ onNavigateToCreateProduct }) {
               </div>
               <button
                 onClick={() => setShowReceiptModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 rounded-lg"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -838,50 +843,64 @@ export default function PosView({ onNavigateToCreateProduct }) {
               <div className="text-center pb-2 border-b border-dashed border-slate-300 dark:border-slate-700">
                 <div className="font-black text-sm tracking-widest text-red-600">*** KEE ONDA ***</div>
                 <div className="text-[10px] text-slate-500">KIOSCO & ALMACÉN 24HS</div>
-                <div className="text-[10px] text-slate-400 mt-1">Ticket #{lastCompletedSale.id}</div>
+                <div className="text-[10px] text-slate-400 mt-1">Ticket #{lastCompletedSale.id || 'S/N'}</div>
                 <div className="text-[10px] text-slate-400">
-                  {new Date(lastCompletedSale.date).toLocaleString('es-AR')}
+                  {lastCompletedSale.date
+                    ? new Date(lastCompletedSale.date).toLocaleString('es-AR')
+                    : new Date().toLocaleString('es-AR')}
                 </div>
-                <div className="text-[10px] text-slate-500">Cajero: {lastCompletedSale.cashier}</div>
+                <div className="text-[10px] text-slate-500">Cajero: {lastCompletedSale.cashier || 'Dueño'}</div>
               </div>
 
               {/* Items List */}
               <div className="space-y-1 py-1 border-b border-dashed border-slate-300 dark:border-slate-700">
-                {lastCompletedSale.items.map((item, idx) => (
-                  <div key={idx} className="flex justify-between text-[11px]">
-                    <span className="truncate max-w-[170px]">
-                      {item.quantity}x {item.name}
-                    </span>
-                    <span className="font-bold font-mono">${item.subtotal.toLocaleString('es-AR')}</span>
-                  </div>
-                ))}
+                {(lastCompletedSale.items || []).map((item, idx) => {
+                  const itemSubtotal =
+                    item.subtotal ?? (Number(item.price || 0) * Number(item.quantity || 1));
+                  return (
+                    <div key={idx} className="flex justify-between text-[11px]">
+                      <span className="truncate max-w-[170px]">
+                        {item.quantity || 1}x {item.name || 'Producto'}
+                      </span>
+                      <span className="font-bold font-mono">
+                        ${Number(itemSubtotal || 0).toLocaleString('es-AR')}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Totals */}
               <div className="space-y-1 pt-1 text-[11px]">
                 <div className="flex justify-between font-black text-xs">
                   <span>TOTAL:</span>
-                  <span className="font-mono">${lastCompletedSale.totalAmount.toLocaleString('es-AR')}</span>
+                  <span className="font-mono">
+                    ${Number(lastCompletedSale.totalAmount || 0).toLocaleString('es-AR')}
+                  </span>
                 </div>
                 <div className="flex justify-between text-[10px] text-slate-500">
                   <span>Pago:</span>
-                  <span>{lastCompletedSale.paymentMethod}</span>
+                  <span>{lastCompletedSale.paymentMethod || 'Efectivo'}</span>
                 </div>
                 {lastCompletedSale.paymentMethod === 'Efectivo' && (
                   <>
                     <div className="flex justify-between text-[10px] text-slate-500">
                       <span>Recibido:</span>
-                      <span className="font-mono">${lastCompletedSale.receivedCash.toLocaleString('es-AR')}</span>
+                      <span className="font-mono">
+                        ${Number(lastCompletedSale.receivedCash || 0).toLocaleString('es-AR')}
+                      </span>
                     </div>
                     <div className="flex justify-between text-[10px] font-bold text-emerald-600">
                       <span>Vuelto:</span>
-                      <span className="font-mono">${lastCompletedSale.changeCash.toLocaleString('es-AR')}</span>
+                      <span className="font-mono">
+                        ${Number(lastCompletedSale.changeCash || 0).toLocaleString('es-AR')}
+                      </span>
                     </div>
                   </>
                 )}
                 <div className="flex justify-between text-[10px] text-slate-500">
                   <span>Cliente:</span>
-                  <span>{lastCompletedSale.customerName}</span>
+                  <span>{lastCompletedSale.customerName || 'Consumidor Final'}</span>
                 </div>
               </div>
 
