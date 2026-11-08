@@ -1,8 +1,12 @@
-import { Chart as ChartJS, registerables } from 'chart.js';
+import Chart from 'chart.js/auto';
+import { registerables } from 'chart.js';
 
-// Register all Chart.js controllers (line, bar, doughnut, pie, etc.), scales, elements and plugins
-ChartJS.register(...registerables);
+// Explicitly register all Chart.js controllers (line, bar, doughnut, pie, etc.)
+if (registerables) {
+  Chart.register(...registerables);
+}
 
-export default ChartJS;
+export default Chart;
+
 
 
