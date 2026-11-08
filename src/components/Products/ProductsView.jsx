@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
+import { playScannerBeep } from '../../utils/soundAndBarcode';
 import {
   Package,
   Plus,
@@ -17,9 +18,14 @@ import {
   X,
   Check,
   Percent,
+  Sparkles,
+  Zap,
+  Volume2,
+  CheckCircle2,
+  ScanLine,
 } from 'lucide-react';
 
-export default function ProductsView() {
+export default function ProductsView({ initialBarcode = '', onClearInitialBarcode }) {
   const {
     products,
     categories,
@@ -42,6 +48,18 @@ export default function ProductsView() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [showBulkPriceModal, setShowBulkPriceModal] = useState(false);
   const [showCategoriesModal, setShowCategoriesModal] = useState(false);
+
+  // Scanner & Barcode Enhancement States
+  const [continuousMode, setContinuousMode] = useState(false); // Carga rápida continua
+  const [manualScanCode, setManualScanCode] = useState('');
+  const [scannerToast, setScannerToast] = useState(null); // { message, type }
+  const [barcodeCapturedFlash, setBarcodeCapturedFlash] = useState(false);
+
+  // Input refs for automatic focus control
+  const barcodeInputRef = useRef(null);
+  const nameInputRef = useRef(null);
+  const costPriceInputRef = useRef(null);
+  const sellPriceInputRef = useRef(null);
 
   // Form State for Add/Edit Product
   const [formData, setFormData] = useState({
@@ -80,12 +98,20 @@ export default function ProductsView() {
     });
   }, [products, searchTerm, selectedCategory, stockFilter]);
 
-  // Open modal for new product
-  const handleOpenNew = () => {
+  // Toast feedback helper
+  const showToast = (message, type = 'success') => {
+    setScannerToast({ message, type });
+    setTimeout(() => {
+      setScannerToast(null);
+    }, 3200);
+  };
+
+  // Open modal for new product (optionally with scanned barcode pre-filled)
+  const handleOpenNew = useCallback((presetBarcode = '') => {
     setEditingProduct(null);
     setFormData({
       name: '',
-      barcode: `779${Math.floor(100000000 + Math.random() * 900000000)}`,
+      barcode: presetBarcode || '',
       category: categories[0]?.name || 'Golosinas y Chocolates',
       costPrice: '',
       sellPrice: '',
@@ -94,26 +120,143 @@ export default function ProductsView() {
       supplier: suppliers[0]?.name || '',
     });
     setShowProductModal(true);
-  };
+
+    if (presetBarcode) {
+      setBarcodeCapturedFlash(true);
+      setTimeout(() => setBarcodeCapturedFlash(false), 2000);
+    }
+
+    setTimeout(() => {
+      if (presetBarcode && nameInputRef.current) {
+        nameInputRef.current.focus();
+      } else if (barcodeInputRef.current) {
+        barcodeInputRef.current.focus();
+      }
+    }, 120);
+  }, [categories, suppliers]);
 
   // Open modal for editing
-  const handleOpenEdit = (product) => {
+  const handleOpenEdit = useCallback((product) => {
     setEditingProduct(product);
     setFormData({
       name: product.name,
       barcode: product.barcode || '',
       category: product.category,
-      costPrice: product.costPrice.toString(),
-      sellPrice: product.sellPrice.toString(),
+      costPrice: product.costPrice ? product.costPrice.toString() : '',
+      sellPrice: product.sellPrice ? product.sellPrice.toString() : '',
       stock: product.stock.toString(),
       minStock: (product.minStock || 5).toString(),
       supplier: product.supplier || '',
     });
     setShowProductModal(true);
-  };
+    setTimeout(() => {
+      if (sellPriceInputRef.current) {
+        sellPriceInputRef.current.focus();
+      }
+    }, 120);
+  }, []);
+
+  // Handle scanned barcode from physical scanner or simulator
+  const handleBarcodeScanned = useCallback(
+    (scannedCode) => {
+      if (!scannedCode) return;
+      const cleanCode = scannedCode.trim();
+
+      // Case 1: Modal is already open -> directly assign barcode and play sound
+      if (showProductModal) {
+        playScannerBeep(true);
+        setFormData((prev) => ({ ...prev, barcode: cleanCode }));
+        setBarcodeCapturedFlash(true);
+        showToast(`¡Código capturado del lector: ${cleanCode}!`, 'success');
+        setTimeout(() => setBarcodeCapturedFlash(false), 2000);
+
+        setTimeout(() => {
+          if (nameInputRef.current && !formData.name) {
+            nameInputRef.current.focus();
+          } else if (sellPriceInputRef.current) {
+            sellPriceInputRef.current.focus();
+          }
+        }, 100);
+        return;
+      }
+
+      // Case 2: Modal is closed -> Check if product exists in catalog
+      const existing = products.find((p) => p.barcode === cleanCode);
+      if (existing) {
+        playScannerBeep(true);
+        showToast(`Producto encontrado: "${existing.name}" ($${existing.sellPrice}) - Abriendo edición`, 'info');
+        handleOpenEdit(existing);
+      } else {
+        playScannerBeep(true);
+        showToast(`¡Nuevo código detectado (${cleanCode})! Completa nombre y precio`, 'success');
+        handleOpenNew(cleanCode);
+      }
+    },
+    [showProductModal, products, formData.name, handleOpenEdit, handleOpenNew]
+  );
+
+  // Auto-open modal if initialBarcode prop was supplied (e.g. redirected from POS)
+  useEffect(() => {
+    if (initialBarcode) {
+      handleOpenNew(initialBarcode);
+      if (onClearInitialBarcode) onClearInitialBarcode();
+    }
+  }, [initialBarcode, handleOpenNew, onClearInitialBarcode]);
+
+  // Global Hardware USB / Bluetooth Barcode Scanner Listener
+  useEffect(() => {
+    let buffer = '';
+    let lastKeyTime = Date.now();
+
+    const handleGlobalKeyDown = (e) => {
+      const activeEl = document.activeElement;
+      const isBarcodeInput = activeEl === barcodeInputRef.current;
+      const activeTag = activeEl ? activeEl.tagName.toLowerCase() : '';
+      const isOtherInput = (activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select') && !isBarcodeInput;
+
+      const now = Date.now();
+      const diff = now - lastKeyTime;
+      lastKeyTime = now;
+
+      if (e.key === 'Enter') {
+        // If Enter is triggered while the Barcode Input is focused (scanner finished writing code)
+        if (isBarcodeInput) {
+          e.preventDefault(); // NEVER submit the form when barcode scanner fires Enter
+          const val = barcodeInputRef.current?.value?.trim();
+          if (val) {
+            playScannerBeep(true);
+            setBarcodeCapturedFlash(true);
+            setTimeout(() => setBarcodeCapturedFlash(false), 1500);
+            showToast(`Código capturado: ${val}`, 'success');
+            if (nameInputRef.current) nameInputRef.current.focus();
+          }
+          return;
+        }
+
+        // If burst captured from global scanner (<80ms keystrokes)
+        if (buffer.length >= 3) {
+          e.preventDefault();
+          const code = buffer.trim();
+          buffer = '';
+          handleBarcodeScanned(code);
+          return;
+        }
+        buffer = '';
+      } else if (e.key.length === 1) {
+        // Keystroke burst detection: barcode scanners send keys very rapidly (<80ms)
+        if (diff > 80 && !isBarcodeInput) {
+          buffer = ''; // Reset buffer if manual slow human typing
+        }
+        buffer += e.key;
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [handleBarcodeScanned]);
 
   // Save product (new or update)
-  const handleSaveProduct = (e) => {
+  const handleSaveProduct = async (e) => {
     e.preventDefault();
     if (!formData.name.trim() || !formData.sellPrice) {
       alert('Nombre y precio de venta son obligatorios.');
@@ -132,12 +275,34 @@ export default function ProductsView() {
     };
 
     if (editingProduct) {
-      updateProduct(editingProduct.id, payload);
+      await updateProduct(editingProduct.id, payload);
+      showToast(`Producto "${payload.name}" actualizado correctamente`, 'success');
+      setShowProductModal(false);
     } else {
-      addProduct(payload);
-    }
+      await addProduct(payload);
+      showToast(`¡"${payload.name}" registrado con éxito!`, 'success');
 
-    setShowProductModal(false);
+      if (continuousMode) {
+        // Continuous mode: Keep modal open for next product scan!
+        setFormData({
+          name: '',
+          barcode: '',
+          category: formData.category, // Keep category for faster bulk entry
+          costPrice: '',
+          sellPrice: '',
+          stock: '20',
+          minStock: '5',
+          supplier: formData.supplier,
+        });
+        setBarcodeCapturedFlash(false);
+        showToast('¡Guardado! Escaneá el siguiente producto con el lector...', 'success');
+        setTimeout(() => {
+          if (barcodeInputRef.current) barcodeInputRef.current.focus();
+        }, 100);
+      } else {
+        setShowProductModal(false);
+      }
+    }
   };
 
   // Apply Bulk Price Markup
@@ -178,6 +343,65 @@ export default function ProductsView() {
 
   return (
     <div className="space-y-6">
+      {/* Quick Barcode Scanner Station Card */}
+      <div className="bg-gradient-to-r from-[#7a0c1a] via-red-700 to-rose-700 rounded-2xl p-4 sm:p-5 text-white shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4 border border-red-500/20">
+        <div className="flex items-start gap-3.5">
+          <div className="w-12 h-12 rounded-2xl bg-white/15 backdrop-blur-md flex items-center justify-center shrink-0 border border-white/20 shadow-inner">
+            <ScanLine className="w-6 h-6 text-white animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="font-black text-sm sm:text-base tracking-wide flex items-center gap-2">
+                <span>Carga con Lector de Barras</span>
+              </h3>
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-black tracking-wider uppercase bg-emerald-500/90 text-white px-2.5 py-0.5 rounded-full shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
+                Lector Activo
+              </span>
+            </div>
+            <p className="text-xs text-red-100/90 mt-1 max-w-xl leading-relaxed">
+              <strong>¡Zero tipeo manual!</strong> Apuntá tu lector sobre cualquier producto del kiosco: si no está cargado, abrirá la carga con el código ya puesto. Si ya existe, abrirá su edición.
+            </p>
+          </div>
+        </div>
+
+        {/* Direct Manual Scan Tester / Quick Simulator */}
+        <div className="flex items-center gap-2 bg-black/30 backdrop-blur-md p-1.5 rounded-xl border border-white/20 w-full md:w-auto shrink-0">
+          <div className="relative flex-1 md:w-52">
+            <Barcode className="w-3.5 h-3.5 text-white/50 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="O escribe/prueba un código..."
+              value={manualScanCode}
+              onChange={(e) => setManualScanCode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && manualScanCode.trim()) {
+                  e.preventDefault();
+                  handleBarcodeScanned(manualScanCode.trim());
+                  setManualScanCode('');
+                }
+              }}
+              className="w-full bg-white/10 text-white placeholder-red-200/60 text-xs pl-8 pr-2 py-1.5 rounded-lg border-none focus:outline-none focus:ring-1 focus:ring-white font-mono"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (manualScanCode.trim()) {
+                handleBarcodeScanned(manualScanCode.trim());
+                setManualScanCode('');
+              } else {
+                playScannerBeep(true);
+                showToast('Pitido del lector probado correctamente 🔊', 'info');
+              }
+            }}
+            className="px-3 py-1.5 bg-white text-red-800 hover:bg-red-50 active:scale-95 rounded-lg text-xs font-bold shrink-0 transition-all shadow-sm"
+          >
+            {manualScanCode.trim() ? 'Simular Disparo' : 'Probar Pitido'}
+          </button>
+        </div>
+      </div>
+
       {/* Top Header Bar */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -213,7 +437,7 @@ export default function ProductsView() {
           </button>
 
           <button
-            onClick={handleOpenNew}
+            onClick={() => handleOpenNew()}
             className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-sm flex items-center gap-1.5 transition-all"
           >
             <Plus className="w-4 h-4" />
@@ -416,68 +640,134 @@ export default function ProductsView() {
       {/* MODAL: ADD / EDIT PRODUCT */}
       {showProductModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl animate-in fade-in zoom-in-95">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-5 sm:p-6 shadow-2xl animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-700 mb-4">
-              <h3 className="font-extrabold text-base sm:text-lg text-slate-800 dark:text-white flex items-center gap-2">
-                <Package className="w-5 h-5 text-red-600" />
-                <span>{editingProduct ? 'Editar Producto' : 'Cargar Nuevo Producto'}</span>
-              </h3>
+              <div>
+                <h3 className="font-extrabold text-base sm:text-lg text-slate-800 dark:text-white flex items-center gap-2">
+                  <Package className="w-5 h-5 text-red-600" />
+                  <span>{editingProduct ? 'Editar Producto' : 'Cargar Producto con Lector'}</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  {editingProduct
+                    ? 'Modifica los valores o actualiza el código disparando el lector'
+                    : 'Dispara con tu lector para ingresar el código automáticamente'}
+                </p>
+              </div>
               <button
                 onClick={() => setShowProductModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleSaveProduct} className="space-y-4">
+              {/* Barcode Section with Visual Scanner Feedback */}
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                    <Barcode className="w-4 h-4 text-red-600" />
+                    <span>Código de Barra / SKU</span>
+                  </label>
+
+                  <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-900/60">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+                    <span>Lector listo para disparar</span>
+                  </span>
+                </div>
+
+                <div className="relative">
+                  <input
+                    ref={barcodeInputRef}
+                    type="text"
+                    placeholder="Dispara con el lector o ingresa código..."
+                    value={formData.barcode}
+                    onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault(); // Stop form submission
+                        playScannerBeep(true);
+                        setBarcodeCapturedFlash(true);
+                        setTimeout(() => setBarcodeCapturedFlash(false), 1500);
+                        if (nameInputRef.current) nameInputRef.current.focus();
+                      }
+                    }}
+                    className={`w-full text-xs sm:text-sm py-2.5 pl-3.5 pr-16 rounded-xl border font-mono transition-all duration-300 focus:outline-none ${
+                      barcodeCapturedFlash
+                        ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/50 ring-2 ring-emerald-500 text-emerald-900 dark:text-emerald-100 font-bold'
+                        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-white focus:ring-2 focus:ring-red-500'
+                    }`}
+                  />
+
+                  <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                    {formData.barcode && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData({ ...formData, barcode: '' });
+                          if (barcodeInputRef.current) barcodeInputRef.current.focus();
+                        }}
+                        className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        title="Borrar código"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    <Barcode className="w-4 h-4 text-slate-400" />
+                  </div>
+                </div>
+
+                {/* Quick Helper Button: Generate Internal Code for loose products */}
+                <div className="flex items-center justify-between text-[11px] pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const autoCode = `779${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+                      setFormData({ ...formData, barcode: autoCode });
+                      playScannerBeep(true);
+                      setBarcodeCapturedFlash(true);
+                      setTimeout(() => setBarcodeCapturedFlash(false), 1500);
+                      if (nameInputRef.current) nameInputRef.current.focus();
+                    }}
+                    className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 font-semibold flex items-center gap-1 transition-colors"
+                  >
+                    <Sparkles className="w-3 h-3 text-red-500" />
+                    <span>Generar código interno (para producto suelto / sin código)</span>
+                  </button>
+                  <span className="text-slate-400 text-[10px]">Al disparar salta al nombre</span>
+                </div>
+              </div>
+
               <div>
                 <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
                   Nombre del Producto *
                 </label>
                 <input
+                  ref={nameInputRef}
                   type="text"
                   required
-                  placeholder="Ej: Coca Cola 500ml / Marlboro Box 20"
+                  placeholder="Ej: Alfajor Guaymallén Blanco / Coca Cola 500ml"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   className="w-full text-xs sm:text-sm py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                    Código de Barra / SKU
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      placeholder="Escanear o ingresar"
-                      value={formData.barcode}
-                      onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
-                      className="w-full text-xs sm:text-sm py-2 pl-3 pr-8 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-red-500"
-                    />
-                    <Barcode className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2" />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                    Categoría
-                  </label>
-                  <select
-                    value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                    className="w-full text-xs sm:text-sm py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
-                  >
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.name}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              <div>
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 block mb-1">
+                  Categoría
+                </label>
+                <select
+                  value={formData.category}
+                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                  className="w-full text-xs sm:text-sm py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
+                >
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -486,9 +776,10 @@ export default function ProductsView() {
                     Costo Compra ($)
                   </label>
                   <input
+                    ref={costPriceInputRef}
                     type="number"
                     step="any"
-                    placeholder="Ej: 1500"
+                    placeholder="Ej: 500"
                     value={formData.costPrice}
                     onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
                     className="w-full text-xs sm:text-sm py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500 font-bold"
@@ -500,10 +791,11 @@ export default function ProductsView() {
                     Precio Venta ($) *
                   </label>
                   <input
+                    ref={sellPriceInputRef}
                     type="number"
                     step="any"
                     required
-                    placeholder="Ej: 2400"
+                    placeholder="Ej: 900"
                     value={formData.sellPrice}
                     onChange={(e) => setFormData({ ...formData, sellPrice: e.target.value })}
                     className="w-full text-xs sm:text-sm py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500 font-black text-red-600"
@@ -563,19 +855,47 @@ export default function ProductsView() {
                 </select>
               </div>
 
+              {/* Continuous Stocking Mode Checkbox */}
+              {!editingProduct && (
+                <div className="p-3 bg-red-50/60 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40 rounded-xl flex items-center justify-between">
+                  <label htmlFor="continuousModeCheckbox" className="flex items-center gap-2.5 cursor-pointer">
+                    <input
+                      id="continuousModeCheckbox"
+                      type="checkbox"
+                      checked={continuousMode}
+                      onChange={(e) => setContinuousMode(e.target.checked)}
+                      className="w-4 h-4 text-red-600 rounded border-slate-300 focus:ring-red-500 cursor-pointer"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                        Carga Rápida Continua
+                      </span>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        Al guardar, deja listo para escanear el siguiente producto
+                      </span>
+                    </div>
+                  </label>
+                  <Zap className={`w-4 h-4 ${continuousMode ? 'text-amber-500 animate-bounce' : 'text-slate-400'}`} />
+                </div>
+              )}
+
               <div className="flex items-center gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowProductModal(false)}
-                  className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50"
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-sm"
+                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 active:scale-95 text-white text-xs font-bold shadow-sm transition-all"
                 >
-                  {editingProduct ? 'Guardar Cambios' : 'Registrar Producto'}
+                  {editingProduct
+                    ? 'Guardar Cambios'
+                    : continuousMode
+                    ? 'Guardar y Escanear Siguiente'
+                    : 'Registrar Producto'}
                 </button>
               </div>
             </form>
@@ -747,6 +1067,39 @@ export default function ProductsView() {
               >
                 Cerrar
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING SCANNER FEEDBACK TOAST */}
+      {scannerToast && (
+        <div
+          className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border backdrop-blur-md animate-in slide-in-from-bottom-5 duration-200 ${
+            scannerToast.type === 'error'
+              ? 'bg-rose-950/95 text-white border-rose-800 shadow-rose-950/50'
+              : scannerToast.type === 'info'
+              ? 'bg-slate-900/95 text-white border-blue-500/50 shadow-slate-950/50'
+              : 'bg-slate-900/95 text-white border-emerald-500/60 shadow-emerald-950/50'
+          }`}
+        >
+          <div
+            className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+              scannerToast.type === 'error'
+                ? 'bg-rose-500/20 text-rose-300'
+                : scannerToast.type === 'info'
+                ? 'bg-blue-500/20 text-blue-300'
+                : 'bg-emerald-500/20 text-emerald-400'
+            }`}
+          >
+            <ScanLine className="w-5 h-5 animate-pulse" />
+          </div>
+          <div className="min-w-0 pr-2">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Lector de Código de Barras
+            </div>
+            <div className="text-xs font-semibold text-white mt-0.5">
+              {scannerToast.message}
             </div>
           </div>
         </div>

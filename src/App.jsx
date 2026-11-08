@@ -16,6 +16,7 @@ function MainApp() {
   const { user } = useApp();
   const [currentView, setCurrentView] = useState('dashboard');
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [pendingBarcodeForProduct, setPendingBarcodeForProduct] = useState('');
 
   // If user is not logged in, show Login view
   if (!user) {
@@ -28,11 +29,23 @@ function MainApp() {
       case 'dashboard':
         return <DashboardView />;
       case 'pos':
-        return <PosView />;
+        return (
+          <PosView
+            onNavigateToCreateProduct={(scannedBarcode) => {
+              setPendingBarcodeForProduct(scannedBarcode);
+              setCurrentView('products');
+            }}
+          />
+        );
       case 'sales':
         return <SalesHistoryView />;
       case 'products':
-        return <ProductsView />;
+        return (
+          <ProductsView
+            initialBarcode={pendingBarcodeForProduct}
+            onClearInitialBarcode={() => setPendingBarcodeForProduct('')}
+          />
+        );
       case 'finances':
         return <FinancesView onNavigateToSales={() => setCurrentView('sales')} />;
       case 'cashShift':

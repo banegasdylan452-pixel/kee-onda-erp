@@ -25,7 +25,7 @@ import {
   Zap,
 } from 'lucide-react';
 
-export default function PosView() {
+export default function PosView({ onNavigateToCreateProduct }) {
   const { products, customers, addSale, user } = useApp();
 
   // POS State
@@ -39,6 +39,7 @@ export default function PosView() {
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showScannerModal, setShowScannerModal] = useState(false);
   const [lastScannedBarcode, setLastScannedBarcode] = useState('');
+  const [unregisteredCode, setUnregisteredCode] = useState(null);
   const [scannerFeedback, setScannerFeedback] = useState(null); // { message, type: 'success' | 'error' }
 
   // Ergonomic Layout Toggle: 'left' (Recommended, near sidebar) vs 'right'
@@ -143,8 +144,10 @@ export default function PosView() {
       addToCart(found, true);
       setSearchTerm('');
       setLastScannedBarcode(code);
+      setUnregisteredCode(null);
     } else {
       playScannerBeep(false);
+      setUnregisteredCode(code);
       showScannerToast(`Código no encontrado: ${code}`, 'error');
     }
   };
@@ -177,14 +180,20 @@ export default function PosView() {
       if (e.key === 'Enter') {
         if (buffer.length >= 3) {
           // Rapid barcode scan detected!
-          const scannedCode = buffer;
+          const scannedCode = buffer.trim();
           buffer = '';
           const found = products.find((p) => p.barcode === scannedCode);
           if (found) {
             e.preventDefault();
             addToCart(found, true);
             setLastScannedBarcode(scannedCode);
+            setUnregisteredCode(null);
             return;
+          } else {
+            // Unregistered barcode in POS
+            playScannerBeep(false);
+            setUnregisteredCode(scannedCode);
+            showScannerToast(`Código no encontrado: ${scannedCode}`, 'error');
           }
         }
         buffer = '';
@@ -529,6 +538,48 @@ export default function PosView() {
           </button>
         </div>
       </div>
+
+      {/* Unregistered Barcode Alert Banner with 1-Click Action to Load */}
+      {unregisteredCode && onNavigateToCreateProduct && (
+        <div className="bg-amber-50 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 rounded-2xl p-3.5 px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-400 flex items-center justify-center shrink-0">
+              <Barcode className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-xs font-extrabold text-slate-800 dark:text-white flex items-center gap-2 flex-wrap">
+                <span>Código no registrado en el sistema:</span>
+                <span className="font-mono bg-amber-200/80 dark:bg-amber-900/80 text-amber-900 dark:text-amber-100 font-black px-2 py-0.5 rounded-md border border-amber-300 dark:border-amber-700">
+                  {unregisteredCode}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+                ¿Deseas dar de alta este producto en el catálogo ahora sin tener que escribir el código?
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+            <button
+              onClick={() => {
+                onNavigateToCreateProduct(unregisteredCode);
+                setUnregisteredCode(null);
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:scale-95 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Cargar Producto con este Código</span>
+            </button>
+            <button
+              onClick={() => setUnregisteredCode(null)}
+              className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg"
+              title="Descartar"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main POS Workspace */}
       <div className={`flex flex-col ${ticketPosition === 'left' ? 'lg:flex-row' : 'lg:flex-row-reverse'} gap-5 min-h-[calc(100vh-180px)]`}>
