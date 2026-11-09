@@ -84,16 +84,16 @@ export default function SalesHistoryView() {
   }, [filteredSales]);
 
   // Handle Confirm Delete / Cancel Sale
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!saleToDelete) return;
 
     const saleId = saleToDelete.id;
     const total = saleToDelete.totalAmount;
-    const success = deleteSale(saleId);
+    const success = await deleteSale(saleId);
 
     if (success) {
       setSaleToDelete(null);
-      setToastMessage(`¡Venta #${saleId} anulada! Se repuso el stock de los productos y se descontó de las ventas.`);
+      setToastMessage(`¡Venta #${saleId} anulada! Se repuso el stock de los productos y se sincronizó con finanzas.`);
       setTimeout(() => setToastMessage(null), 3500);
     }
   };

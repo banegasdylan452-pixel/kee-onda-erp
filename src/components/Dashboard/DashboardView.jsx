@@ -131,8 +131,8 @@ export default function DashboardView() {
     // Total Ingresos = Ventas POS + Otros Ingresos
     const totalIngresos = totalSalesAmount + extraIncomes;
 
-    // Net Balance = Total Ingresos - Costo de Compra de lo vendido - Gastos operativos
-    const balanceNeto = totalIngresos - totalCostOfGoods - operationalExpensesOnly;
+    // Net Balance = Total Ingresos - Total Egresos (strictly synchronized with Finanzas)
+    const balanceNeto = totalIngresos - totalEgresos;
 
     // Average ticket & count
     const totalTickets = filteredSales.length;
@@ -616,7 +616,7 @@ export default function DashboardView() {
               ${metrics.balanceNeto.toLocaleString('es-AR')}
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Resultado real (Ingresos - Costos - Gastos)
+              {metrics.balanceNeto >= 0 ? 'Superávit operativo' : 'Déficit operativo'} · Sincronizado con Finanzas
             </p>
           </div>
           <div className={`absolute bottom-0 left-0 right-0 h-1 ${

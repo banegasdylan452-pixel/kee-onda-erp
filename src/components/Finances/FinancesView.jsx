@@ -50,7 +50,8 @@ export default function FinancesView({ onNavigateToSales }) {
   const [activeTab, setActiveTab] = useState('EGRESOS');
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('TODAS');
-  const [dateFilter, setDateFilter] = useState('MONTH'); // 'ALL' | 'TODAY' | 'MONTH'
+  // Date filter: 'TODAY' | 'WEEK' | 'MONTH' | 'ALL'
+  const [dateFilter, setDateFilter] = useState('MONTH');
 
   // Modals state
   const [showExpenseModal, setShowExpenseModal] = useState(false);
@@ -65,13 +66,52 @@ export default function FinancesView({ onNavigateToSales }) {
     date: new Date().toISOString().split('T')[0],
   });
 
-  // Filtered movements
-  const filteredFinances = useMemo(() => {
+  // Calculate strict date range for synchronization
+  const dateRange = useMemo(() => {
     const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
+    if (dateFilter === 'TODAY') {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start, end, label: 'Hoy' };
+    }
+    if (dateFilter === 'WEEK') {
+      const currentDay = now.getDay();
+      const diffToMonday = currentDay === 0 ? -6 : 1 - currentDay;
+      const start = new Date(now);
+      start.setDate(now.getDate() + diffToMonday);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      end.setHours(23, 59, 59, 999);
+      return { start, end, label: 'Esta Semana' };
+    }
+    if (dateFilter === 'MONTH') {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      return { start, end, label: 'Este Mes' };
+    }
+    // 'ALL'
+    return { start: new Date(0), end: new Date(2100, 0, 1), label: 'Histórico Completo' };
+  }, [dateFilter]);
 
+  // Sales in the active period (exact match with POS and Dashboard)
+  const periodSales = useMemo(() => {
+    return sales.filter((s) => {
+      const sDate = new Date(s.date);
+      return sDate >= dateRange.start && sDate <= dateRange.end;
+    });
+  }, [sales, dateRange]);
+
+  // Finances in the active period
+  const periodFinances = useMemo(() => {
+    return finances.filter((f) => {
+      const fDate = new Date(f.date);
+      return fDate >= dateRange.start && fDate <= dateRange.end;
+    });
+  }, [finances, dateRange]);
+
+  // Filtered movements for table display
+  const filteredFinances = useMemo(() => {
     return finances.filter((item) => {
       // Tab filter
       if (activeTab === 'EGRESOS' && item.type !== 'egreso') return false;
@@ -90,56 +130,56 @@ export default function FinancesView({ onNavigateToSales }) {
         return false;
       }
 
-      // Date filter
-      if (dateFilter === 'TODAY') {
-        const itemDateStr = new Date(item.date).toISOString().split('T')[0];
-        if (itemDateStr !== todayStr) return false;
-      } else if (dateFilter === 'MONTH') {
-        const itemDate = new Date(item.date);
-        if (itemDate.getMonth() !== currentMonth || itemDate.getFullYear() !== currentYear) {
-          return false;
-        }
+      // Date range filter
+      const itemDate = new Date(item.date);
+      if (itemDate < dateRange.start || itemDate > dateRange.end) {
+        return false;
       }
 
       return true;
     });
-  }, [finances, activeTab, categoryFilter, searchTerm, dateFilter]);
+  }, [finances, activeTab, categoryFilter, searchTerm, dateRange]);
 
-  // Aggregate stats
+  // Synchronized Aggregate stats (strictly synchronized with Dashboard)
   const totals = useMemo(() => {
-    let ventasPOS = 0;
-    let ingresosExtras = 0;
-    let egresos = 0;
+    // 1. Total Ventas POS comes directly from POS sales in the same period
+    const ventasPOS = periodSales.reduce((acc, s) => acc + (s.totalAmount || 0), 0);
+    const totalCostOfGoods = periodSales.reduce((acc, s) => acc + (s.totalCost || 0), 0);
+
+    // 2. Extra incomes from finances (excluding Venta Kiosco to avoid duplication)
+    const ingresosExtras = periodFinances
+      .filter((f) => f.type === 'ingreso' && f.category !== 'Venta Kiosco')
+      .reduce((acc, f) => acc + (Number(f.amount) || 0), 0);
+
+    // 3. Total Egresos
+    const egresos = periodFinances
+      .filter((f) => f.type === 'egreso')
+      .reduce((acc, f) => acc + (Number(f.amount) || 0), 0);
+
     let gastosLuz = 0;
     let alquiler = 0;
-
-    finances.forEach((f) => {
-      const amt = Number(f.amount) || 0;
-      if (f.type === 'ingreso') {
-        if (f.category === 'Venta Kiosco') {
-          ventasPOS += amt;
-        } else {
-          ingresosExtras += amt;
-        }
-      } else if (f.type === 'egreso') {
-        egresos += amt;
+    periodFinances.forEach((f) => {
+      if (f.type === 'egreso') {
+        const amt = Number(f.amount) || 0;
         if (f.category.includes('Luz')) gastosLuz += amt;
         if (f.category.includes('Alquiler')) alquiler += amt;
       }
     });
 
     const totalIngresos = ventasPOS + ingresosExtras;
+    const balance = totalIngresos - egresos;
 
     return {
       ventasPOS,
+      totalCostOfGoods,
       ingresosExtras,
       totalIngresos,
       egresos,
-      balance: totalIngresos - egresos,
+      balance,
       gastosLuz,
       alquiler,
     };
-  }, [finances]);
+  }, [periodSales, periodFinances]);
 
   // Open Modals
   const handleOpenExpense = () => {
@@ -267,8 +307,13 @@ export default function FinancesView({ onNavigateToSales }) {
               Control Contable
             </span>
           </div>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Control de gastos (luz, gas, alquiler, proveedores, haberes) e ingresos adicionales (SUBE, comisiones)
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1.5 flex-wrap">
+            <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Período: <strong className="text-slate-700 dark:text-slate-200">{dateRange.label}</strong></span>
+            <span className="text-slate-400">·</span>
+            <span className="text-emerald-600 dark:text-emerald-400 font-bold inline-flex items-center gap-1 text-xs">
+              <Sparkles className="w-3 h-3" /> Sincronizado en tiempo real con Dashboard
+            </span>
           </p>
         </div>
 
@@ -420,13 +465,20 @@ export default function FinancesView({ onNavigateToSales }) {
           </div>
 
           {/* Date Filter */}
-          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
+          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 flex-wrap">
             <button
-              onClick={() => setDateFilter('ALL')}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold ${dateFilter === 'ALL' ? 'bg-red-600 text-white shadow-sm' : 'text-slate-600 dark:text-slate-400'
+              onClick={() => setDateFilter('TODAY')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold ${dateFilter === 'TODAY' ? 'bg-red-600 text-white shadow-sm' : 'text-slate-600 dark:text-slate-400'
                 }`}
             >
-              Histórico
+              Hoy
+            </button>
+            <button
+              onClick={() => setDateFilter('WEEK')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold ${dateFilter === 'WEEK' ? 'bg-red-600 text-white shadow-sm' : 'text-slate-600 dark:text-slate-400'
+                }`}
+            >
+              Esta Semana
             </button>
             <button
               onClick={() => setDateFilter('MONTH')}
@@ -436,11 +488,11 @@ export default function FinancesView({ onNavigateToSales }) {
               Este Mes
             </button>
             <button
-              onClick={() => setDateFilter('TODAY')}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold ${dateFilter === 'TODAY' ? 'bg-red-600 text-white shadow-sm' : 'text-slate-600 dark:text-slate-400'
+              onClick={() => setDateFilter('ALL')}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold ${dateFilter === 'ALL' ? 'bg-red-600 text-white shadow-sm' : 'text-slate-600 dark:text-slate-400'
                 }`}
             >
-              Hoy
+              Histórico
             </button>
           </div>
         </div>
@@ -556,7 +608,7 @@ export default function FinancesView({ onNavigateToSales }) {
                       </td>
 
                       <td className="py-3 px-3 text-center">
-                        {f.referenceId && f.category === 'Venta Kiosco' ? (
+                        {f.category === 'Venta Kiosco' && sales.some((s) => s.id === f.referenceId) ? (
                           <span className="text-[10px] text-slate-400 font-mono">Vía Ventas</span>
                         ) : (
                           <button

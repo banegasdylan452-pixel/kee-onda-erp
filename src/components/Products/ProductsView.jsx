@@ -81,12 +81,42 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
   const [newCatName, setNewCatName] = useState('');
   const [newCatColor, setNewCatColor] = useState('#ef4444');
 
-  // Filtered products list
+  // Real-time duplicate barcode detector
+  const duplicateBarcodeProduct = useMemo(() => {
+    const code = (formData.barcode || '').trim().toLowerCase();
+    if (!code) return null;
+    return products.find(
+      (p) =>
+        (p.barcode || '').trim().toLowerCase() === code &&
+        p.id !== editingProduct?.id
+    );
+  }, [formData.barcode, products, editingProduct]);
+
+  // Filtered products list with robust barcode and text search
   const filteredProducts = useMemo(() => {
+    const cleanSearch = searchTerm.trim().toLowerCase();
+    const searchNoDash = cleanSearch.replace(/[\s-]/g, '');
+
     return products.filter((p) => {
-      const matchesSearch =
-        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (p.barcode && p.barcode.includes(searchTerm));
+      if (cleanSearch) {
+        const prodName = (p.name || '').toLowerCase();
+        const prodBarcode = (p.barcode || '').toLowerCase();
+        const prodBarcodeNoDash = prodBarcode.replace(/[\s-]/g, '');
+        const prodCategory = (p.category || '').toLowerCase();
+        const prodSupplier = (p.supplier || '').toLowerCase();
+
+        const matchesName = prodName.includes(cleanSearch);
+        const matchesBarcode =
+          prodBarcode.includes(cleanSearch) ||
+          (prodBarcodeNoDash && prodBarcodeNoDash.includes(searchNoDash));
+        const matchesCategory = prodCategory.includes(cleanSearch);
+        const matchesSupplier = prodSupplier.includes(cleanSearch);
+
+        if (!matchesName && !matchesBarcode && !matchesCategory && !matchesSupplier) {
+          return false;
+        }
+      }
+
       const matchesCat =
         selectedCategory === 'TODOS' || p.category === selectedCategory;
 
@@ -94,7 +124,7 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
       if (stockFilter === 'LOW') matchesStock = p.stock > 0 && p.stock <= p.minStock;
       if (stockFilter === 'OUT') matchesStock = p.stock <= 0;
 
-      return matchesSearch && matchesCat && matchesStock;
+      return matchesCat && matchesStock;
     });
   }, [products, searchTerm, selectedCategory, stockFilter]);
 
@@ -164,11 +194,22 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
 
       // Case 1: Modal is already open -> directly assign barcode and play sound
       if (showProductModal) {
-        playScannerBeep(true);
         setFormData((prev) => ({ ...prev, barcode: cleanCode }));
         setBarcodeCapturedFlash(true);
-        showToast(`¡Código capturado del lector: ${cleanCode}!`, 'success');
         setTimeout(() => setBarcodeCapturedFlash(false), 2000);
+
+        // Check if barcode belongs to another product
+        const duplicate = products.find(
+          (p) => (p.barcode || '').trim().toLowerCase() === cleanCode.toLowerCase() && p.id !== editingProduct?.id
+        );
+
+        if (duplicate) {
+          playScannerBeep(false);
+          showToast(`⚠️ ¡Atención! Código ya cargado en: "${duplicate.name}"`, 'error');
+        } else {
+          playScannerBeep(true);
+          showToast(`¡Código capturado del lector: ${cleanCode}!`, 'success');
+        }
 
         setTimeout(() => {
           if (nameInputRef.current && !formData.name) {
@@ -181,10 +222,12 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
       }
 
       // Case 2: Modal is closed -> Check if product exists in catalog
-      const existing = products.find((p) => p.barcode === cleanCode);
+      const existing = products.find(
+        (p) => (p.barcode || '').trim().toLowerCase() === cleanCode.toLowerCase()
+      );
       if (existing) {
         playScannerBeep(true);
-        showToast(`Producto encontrado: "${existing.name}" ($${existing.sellPrice}) - Abriendo edición`, 'info');
+        showToast(`ℹ️ Producto ya cargado: "${existing.name}" ($${existing.sellPrice}) - Abriendo edición`, 'info');
         handleOpenEdit(existing);
       } else {
         playScannerBeep(true);
@@ -192,7 +235,7 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
         handleOpenNew(cleanCode);
       }
     },
-    [showProductModal, products, formData.name, handleOpenEdit, handleOpenNew]
+    [showProductModal, products, editingProduct, formData.name, handleOpenEdit, handleOpenNew]
   );
 
   // Auto-open modal if initialBarcode prop was supplied (e.g. redirected from POS)
@@ -263,6 +306,15 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
       return;
     }
 
+    // Verify barcode uniqueness
+    if (duplicateBarcodeProduct) {
+      alert(
+        `⚠️ ¡ATENCIÓN! No es posible guardar:\n\nEl código de barra "${formData.barcode.trim()}" ya está cargado en el producto:\n"${duplicateBarcodeProduct.name}" ($${duplicateBarcodeProduct.sellPrice.toLocaleString('es-AR')}).\n\nNo puedes registrar dos productos con el mismo código. Cambia el código o edita el producto existente.`
+      );
+      if (barcodeInputRef.current) barcodeInputRef.current.focus();
+      return;
+    }
+
     const payload = {
       name: formData.name.trim(),
       barcode: formData.barcode.trim(),
@@ -275,11 +327,19 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
     };
 
     if (editingProduct) {
-      await updateProduct(editingProduct.id, payload);
+      const res = await updateProduct(editingProduct.id, payload);
+      if (res?.error) {
+        alert(res.error);
+        return;
+      }
       showToast(`Producto "${payload.name}" actualizado correctamente`, 'success');
       setShowProductModal(false);
     } else {
-      await addProduct(payload);
+      const res = await addProduct(payload);
+      if (res?.error) {
+        alert(res.error);
+        return;
+      }
       showToast(`¡"${payload.name}" registrado con éxito!`, 'success');
 
       if (continuousMode) {
@@ -454,11 +514,21 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Buscar por nombre o código de barra..."
+              placeholder="Buscar por código de barra o nombre..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white placeholder-slate-400 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+              className="w-full pl-10 pr-10 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white placeholder-slate-400 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-red-500 font-medium"
             />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+                title="Limpiar búsqueda"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           {/* Stock Filter Pills */}
@@ -561,9 +631,15 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
                     >
                       <td className="py-3 px-4">
                         <div className="font-bold text-slate-800 dark:text-white">{p.name}</div>
-                        <div className="text-[11px] text-slate-400 flex items-center gap-1 font-mono">
-                          <Barcode className="w-3 h-3" />
-                          <span>{p.barcode || 'S/C'}</span>
+                        <div className="text-[11px] text-slate-400 flex items-center gap-1.5 font-mono mt-0.5">
+                          <Barcode className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                          {searchTerm && p.barcode && p.barcode.toLowerCase().includes(searchTerm.trim().toLowerCase()) ? (
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-extrabold border border-emerald-300 dark:border-emerald-800 shadow-xs">
+                              {p.barcode} · Coincide código
+                            </span>
+                          ) : (
+                            <span>{p.barcode || 'S/C'}</span>
+                          )}
                           {p.supplier && <span className="text-slate-500 font-sans">· {p.supplier}</span>}
                         </div>
                       </td>
@@ -693,7 +769,9 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
                       }
                     }}
                     className={`w-full text-xs sm:text-sm py-2.5 pl-3.5 pr-16 rounded-xl border font-mono transition-all duration-300 focus:outline-none ${
-                      barcodeCapturedFlash
+                      duplicateBarcodeProduct
+                        ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-100 ring-2 ring-amber-500 font-bold'
+                        : barcodeCapturedFlash
                         ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/50 ring-2 ring-emerald-500 text-emerald-900 dark:text-emerald-100 font-bold'
                         : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-white focus:ring-2 focus:ring-red-500'
                     }`}
@@ -713,9 +791,40 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
                         <X className="w-3.5 h-3.5" />
                       </button>
                     )}
-                    <Barcode className="w-4 h-4 text-slate-400" />
+                    <Barcode className={`w-4 h-4 ${duplicateBarcodeProduct ? 'text-amber-600 font-bold' : 'text-slate-400'}`} />
                   </div>
                 </div>
+
+                {/* PROMINENT DUPLICATE BARCODE WARNING BANNER */}
+                {duplicateBarcodeProduct && (
+                  <div className="p-3 bg-amber-50 dark:bg-amber-950/60 border-2 border-amber-500/80 rounded-xl text-amber-950 dark:text-amber-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm animate-in fade-in">
+                    <div className="flex items-start gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                        <AlertTriangle className="w-5 h-5 animate-pulse" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black tracking-wide uppercase text-amber-900 dark:text-amber-200">
+                          ⚠️ ¡Código de barra ya cargado en el sistema!
+                        </p>
+                        <p className="text-xs text-amber-900 dark:text-amber-100 mt-0.5">
+                          Pertenece al producto: <strong className="underline decoration-amber-500 font-bold">"{duplicateBarcodeProduct.name}"</strong>
+                        </p>
+                        <p className="text-[11px] text-amber-800/90 dark:text-amber-300">
+                          Precio: ${duplicateBarcodeProduct.sellPrice.toLocaleString('es-AR')} · Stock: {duplicateBarcodeProduct.stock} u. · Cat: {duplicateBarcodeProduct.category}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEdit(duplicateBarcodeProduct)}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white rounded-lg text-xs font-bold shrink-0 transition-all shadow-sm flex items-center gap-1 self-end sm:self-auto"
+                    >
+                      <span>Modificar ese producto</span>
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
 
                 {/* Quick Helper Button: Generate Internal Code for loose products */}
                 <div className="flex items-center justify-between text-[11px] pt-1">
@@ -889,13 +998,25 @@ export default function ProductsView({ initialBarcode = '', onClearInitialBarcod
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 active:scale-95 text-white text-xs font-bold shadow-sm transition-all"
+                  disabled={Boolean(duplicateBarcodeProduct)}
+                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-1.5 ${
+                    duplicateBarcodeProduct
+                      ? 'bg-amber-600/70 text-white cursor-not-allowed opacity-80'
+                      : 'bg-red-600 hover:bg-red-700 active:scale-95 text-white'
+                  }`}
                 >
-                  {editingProduct
-                    ? 'Guardar Cambios'
-                    : continuousMode
-                    ? 'Guardar y Escanear Siguiente'
-                    : 'Registrar Producto'}
+                  {duplicateBarcodeProduct ? (
+                    <>
+                      <AlertTriangle className="w-4 h-4" />
+                      <span>Código Duplicado</span>
+                    </>
+                  ) : editingProduct ? (
+                    'Guardar Cambios'
+                  ) : continuousMode ? (
+                    'Guardar y Escanear Siguiente'
+                  ) : (
+                    'Registrar Producto'
+                  )}
                 </button>
               </div>
             </form>

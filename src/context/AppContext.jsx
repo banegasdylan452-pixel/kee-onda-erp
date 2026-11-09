@@ -159,6 +159,7 @@ export function AppProvider({ children }) {
       if (suppData) setSuppliers(suppData);
 
       // Reconstruct sales with line items
+      const validSaleIds = new Set();
       if (salesData) {
         const itemsMap = {};
         (itemsData || []).forEach((item) => {
@@ -175,23 +176,49 @@ export function AppProvider({ children }) {
           });
         });
 
-        const mappedSales = salesData.map((s) => ({
-          id: s.id,
-          date: s.date,
-          totalAmount: Number(s.total_amount),
-          totalCost: Number(s.total_cost),
-          profit: Number(s.profit),
-          paymentMethod: s.payment_method,
-          customerName: s.customer_name,
-          cashier: s.cashier,
-          receivedCash: Number(s.received_cash),
-          changeCash: Number(s.change_cash),
-          items: itemsMap[s.id] || [],
-        }));
+        const mappedSales = salesData.map((s) => {
+          validSaleIds.add(s.id);
+          return {
+            id: s.id,
+            date: s.date,
+            totalAmount: Number(s.total_amount),
+            totalCost: Number(s.total_cost),
+            profit: Number(s.profit),
+            paymentMethod: s.payment_method,
+            customerName: s.customer_name,
+            cashier: s.cashier,
+            receivedCash: Number(s.received_cash),
+            changeCash: Number(s.change_cash),
+            items: itemsMap[s.id] || [],
+          };
+        });
         setSales(mappedSales);
+      } else {
+        setSales([]);
       }
 
-      if (finData) setFinances(finData.map(mapFinanceFromDb));
+      // Map and sanitize finances: purge any orphaned "Venta Kiosco" entries without a valid sale in salesData
+      if (finData) {
+        const mappedFinances = finData.map(mapFinanceFromDb);
+        const cleanFinances = mappedFinances.filter((f) => {
+          if (f.category === 'Venta Kiosco') {
+            return f.referenceId && validSaleIds.has(f.referenceId);
+          }
+          return true;
+        });
+        setFinances(cleanFinances);
+
+        // Clean orphaned entries from Supabase table to keep DB permanently clean
+        const orphanedInDb = finData.filter(
+          (f) => f.category === 'Venta Kiosco' && (!f.reference_id || !validSaleIds.has(f.reference_id))
+        );
+        if (orphanedInDb.length > 0 && supabase) {
+          const orphanIds = orphanedInDb.map((o) => o.id);
+          supabase.from('finances').delete().in('id', orphanIds).then(() => {});
+        }
+      } else {
+        setFinances([]);
+      }
 
       if (shiftData && shiftData.length > 0) {
         const s = shiftData[0];
@@ -232,7 +259,16 @@ export function AppProvider({ children }) {
           if (parsed.customers) setCustomers(parsed.customers);
           if (parsed.suppliers) setSuppliers(parsed.suppliers);
           if (parsed.sales) setSales(parsed.sales);
-          if (parsed.finances) setFinances(parsed.finances);
+          if (parsed.finances) {
+            const validSaleIds = new Set((parsed.sales || []).map((s) => s.id));
+            const cleanFin = parsed.finances.filter((f) => {
+              if (f.category === 'Venta Kiosco') {
+                return f.referenceId && validSaleIds.has(f.referenceId);
+              }
+              return true;
+            });
+            setFinances(cleanFin);
+          }
           if (parsed.cashShift) setCashShift(parsed.cashShift);
         }
       } catch (e) {
@@ -297,8 +333,22 @@ export function AppProvider({ children }) {
   // PRODUCTS CRUD
   // -------------------------------------------------------------
   const addProduct = async (prodData) => {
+    const cleanBarcode = (prodData.barcode || '').trim();
+    if (cleanBarcode) {
+      const existing = products.find(
+        (p) => (p.barcode || '').trim().toLowerCase() === cleanBarcode.toLowerCase()
+      );
+      if (existing) {
+        return {
+          error: `El código de barra "${cleanBarcode}" ya pertenece al producto "${existing.name}". No se pueden duplicar códigos.`,
+          existingProduct: existing,
+        };
+      }
+    }
+
     const newProd = {
       ...prodData,
+      barcode: cleanBarcode,
       id: `prod-${Date.now()}`,
       stock: Number(prodData.stock) || 0,
       minStock: Number(prodData.minStock) || 5,
@@ -318,9 +368,27 @@ export function AppProvider({ children }) {
         console.error('Supabase addProduct error:', err);
       }
     }
+    return { success: true, product: newProd };
   };
 
   const updateProduct = async (id, updatedFields) => {
+    if (updatedFields.barcode !== undefined) {
+      const cleanBarcode = (updatedFields.barcode || '').trim();
+      if (cleanBarcode) {
+        const existing = products.find(
+          (p) =>
+            p.id !== id &&
+            (p.barcode || '').trim().toLowerCase() === cleanBarcode.toLowerCase()
+        );
+        if (existing) {
+          return {
+            error: `El código de barra "${cleanBarcode}" ya pertenece a "${existing.name}". No se pueden duplicar códigos.`,
+            existingProduct: existing,
+          };
+        }
+      }
+    }
+
     setProducts((prev) =>
       prev.map((p) =>
         p.id === id
@@ -671,8 +739,10 @@ export function AppProvider({ children }) {
     // Delete in Supabase
     if (supabase && isSupabaseConfigured()) {
       try {
+        await supabase.from('sale_items').delete().eq('sale_id', saleId);
         await supabase.from('sales').delete().eq('id', saleId);
         await supabase.from('finances').delete().eq('reference_id', saleId);
+        await supabase.from('finances').delete().eq('id', `FIN-ING-${saleId}`);
 
         // Update product stock in DB
         for (const item of saleToDelete.items || []) {

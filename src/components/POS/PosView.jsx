@@ -65,13 +65,26 @@ export default function PosView({ onNavigateToCreateProduct }) {
 
   // Filter products by search and category (NO IMAGES used)
   const filteredProducts = useMemo(() => {
+    const cleanSearch = searchTerm.trim().toLowerCase();
+    const searchNoDash = cleanSearch.replace(/[\s-]/g, '');
+
     return products.filter((p) => {
-      const matchesSearch =
-        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (p.barcode && p.barcode.includes(searchTerm));
+      if (cleanSearch) {
+        const prodName = (p.name || '').toLowerCase();
+        const prodBarcode = (p.barcode || '').toLowerCase();
+        const prodBarcodeNoDash = prodBarcode.replace(/[\s-]/g, '');
+
+        const matchesName = prodName.includes(cleanSearch);
+        const matchesBarcode =
+          prodBarcode.includes(cleanSearch) ||
+          (prodBarcodeNoDash && prodBarcodeNoDash.includes(searchNoDash));
+
+        if (!matchesName && !matchesBarcode) return false;
+      }
+
       const matchesCat =
         selectedCategory === 'TODOS' || p.category === selectedCategory;
-      return matchesSearch && matchesCat;
+      return matchesCat;
     });
   }, [products, searchTerm, selectedCategory]);
 
